@@ -29,7 +29,8 @@ Built with PyQt6 and pyqtgraph.
 ## Requirements
 
 - Python 3.10 or newer
-- An `iperf3` binary (one is bundled for Windows; see [Bundled iperf3](#bundled-iperf3))
+- An `iperf3` binary — **not included in this repository**, see
+  [Getting iperf3](#getting-iperf3)
 
 ## Setup
 
@@ -72,27 +73,39 @@ bundle options live in the spec file — the batch script only invokes it.
 
 ---
 
-## Bundled iperf3
+## Getting iperf3
 
-The Windows build ships `iperf3.exe` together with the Cygwin runtime DLLs it
-links against (`cygwin1.dll`, `cygcrypto-3.dll`, `cygz.dll`).
+`iperf3` is a third-party binary with its own licence, so it is deliberately
+**not tracked in this repository**. Provide it in either of two ways:
 
-**The bundled binary is iperf 3.1.3, built in 2016.** It does not support:
+1. **Next to the project** — place `iperf3.exe` (and the DLLs it links against)
+   in the repository root. This is what the PyInstaller build bundles.
+2. **On your `PATH`** — the app falls back to a `PATH` lookup and logs a
+   warning when no local copy is found.
 
-| Feature | Requires | Status here |
+Download a Windows build from
+[software.es.net/iperf](https://software.es.net/iperf/) or
+[files.budman.pw/files/iperf3](https://files.budman.pw/files/iperf3/), and copy
+the `.exe` together with every DLL in the same archive.
+
+If no binary is available the app still starts; it reports the problem in the
+console and tests fail until one is provided.
+
+### Version matters
+
+The app probes the binary at startup and disables anything it cannot do, so a
+newer `iperf3` unlocks more features with no code change. Against **iperf 3.1.3**
+(the Cygwin build this project was originally developed with) the following are
+unavailable:
+
+| Feature | Requires | Status on 3.1.3 |
 |---|---|---|
 | `--bidir` (bidirectional) | iperf3 ≥ 3.7 | Unavailable |
 | `--sctp` | an SCTP-enabled build | Unavailable |
-| `Retr` (retransmit) column | a build with TCP_INFO | Not reported |
+| `Retr` (retransmit) column | a build reporting TCP_INFO | Not reported |
 | UDP with `-P` > 1 | iperf3 ≥ 3.2 | Hangs; use Stop to cancel |
 
-The app detects this at startup, disables the affected controls and notes the
-reason in the console. **Replacing `iperf3.exe` with a current build from
-[software.es.net/iperf](https://software.es.net/iperf/) enables these features
-automatically** — no code change is needed, since detection is done by probing
-the binary rather than by hard-coding a version.
-
-If no bundled binary is present, the app falls back to any `iperf3` on `PATH`.
+**Using iperf3 3.17 or newer is recommended** — it enables all of the above.
 
 ---
 
@@ -159,10 +172,14 @@ widgets only read values into it, so the CLI vocabulary has one definition and
 can be tested without Qt.
 
 **Parsing is positional and stateful.** `iperf3`'s columns are not labelled on
-data rows, so the retransmit count is read by position. The parser tracks the
-`- - - - -` separator to tell live interval rows from the closing summary,
-and filters `[SUM]` against per-stream rows so parallel-stream runs are not
-double-counted.
+data rows, so the retransmit count is read by position — searching for the word
+`Retr` only ever matches the header. Live interval rows are told apart from the
+closing summary by three combined signals: a separator followed by a column
+header, an explicit `sender`/`receiver` tag, and the interval restarting at
+zero. No single signal suffices — the `- - - - -` separator is printed after
+*every* interval group once `-P > 1`, and the UDP client summary carries no
+tag at all. `[SUM]` rows are filtered against per-stream rows so parallel runs
+are not double-counted.
 
 **Sweep progressions are strategies.** Adding a new progression means adding a
 `SweepStrategy` subclass, not another branch in the engine.
@@ -189,6 +206,11 @@ See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## Licence
 
-No licence has been chosen for this project yet. Note that redistributing the
-bundled Cygwin DLLs carries obligations — see the notices file before
-publishing a build.
+No licence has been chosen for this project yet, which means default copyright
+applies and others have no granted rights to reuse the code.
+
+Note that PyQt6 is offered under the GPL v3 or a commercial licence, which
+constrains what this project can be licensed as. If you distribute a built
+executable that bundles `iperf3` and its Cygwin DLLs, review
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) first — the LGPL carries
+relinking obligations that the source repository itself does not.

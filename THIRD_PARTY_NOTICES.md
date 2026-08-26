@@ -1,14 +1,19 @@
 # Third-Party Notices
 
-This application bundles and depends on the following third-party components.
-This file is informational; it is not legal advice, and the upstream licence
-texts are authoritative.
+This application depends on the following third-party components, and bundles
+some of them into its distributable build. This file is informational; it is
+not legal advice, and the upstream licence texts are authoritative.
 
-## Bundled binaries (Windows distribution)
+> **The binaries below are not tracked in this repository.** They are supplied
+> separately by whoever builds or runs the app (see "Getting iperf3" in the
+> README). The obligations here apply when you **distribute a built executable**
+> that bundles them, not to the source repository itself.
+
+## Binaries bundled into a Windows build
 
 ### iperf3
 
-- **File:** `iperf3.exe` (version 3.1.3)
+- **File:** `iperf3.exe` (whichever build you supply; 3.1.3 was used in development)
 - **Upstream:** https://github.com/esnet/iperf
 - **Licence:** BSD 3-Clause, © University of California, Lawrence Berkeley
   National Laboratory
@@ -17,7 +22,9 @@ texts are authoritative.
 
 ### Cygwin runtime
 
-- **Files:** `cygwin1.dll`, `cygcrypto-3.dll`, `cygz.dll`
+- **Files:** `cygwin1.dll`, and for OpenSSL-enabled builds also
+  `cygcrypto-*.dll` and `cygz.dll`. The Cygwin build of iperf 3.1.3 links only
+  against `cygwin1.dll`.
 - **Upstream:** https://cygwin.com/
 - **Licence:** `cygwin1.dll` is distributed under the GNU LGPL v3.
   `cygcrypto-3.dll` derives from OpenSSL (Apache 2.0); `cygz.dll` derives from
@@ -26,11 +33,11 @@ texts are authoritative.
   application against a modified version of the library, and that the licence
   text and corresponding source be made available.
 
-> **Note on redistribution.** The bundled `iperf3.exe` is a Cygwin build, which
-> is why the Cygwin DLLs are required. If you intend to publish builds of this
-> application, review the LGPL obligations above. Linking against a native
-> (non-Cygwin) `iperf3` build, or shipping without a bundled binary and
-> requiring one on `PATH`, avoids them entirely.
+> **Note on redistribution.** A Cygwin `iperf3.exe` build is why the Cygwin
+> DLLs are needed at all; a native (MinGW/MSVC) build needs none of them. If you
+> intend to publish builds of this application, review the LGPL obligations
+> above. Two approaches avoid them entirely: bundle a native `iperf3` build, or
+> ship no binary at all and require one on the user's `PATH`.
 
 ## Python dependencies
 

@@ -5,9 +5,14 @@ This is the single source of truth for the bundle: ``build_exe.bat`` invokes
 this spec rather than repeating the options on the command line, so the two
 cannot drift apart.
 
-Every Cygwin DLL that ``iperf3.exe`` links against must be listed here. The
-previous build shipped only ``cygwin1.dll``, so the bundled binary failed to
-start on machines without a Cygwin installation of its own.
+The iperf3 binary is not tracked in this repository; see the "Getting iperf3"
+section of README.md. If it is absent the bundle is still built, but the
+resulting application will need an ``iperf3`` on the user's PATH.
+
+``_RUNTIME_FILES`` must list every DLL the chosen ``iperf3`` build links
+against. The Cygwin build of iperf 3.1.3 needs only ``cygwin1.dll``; a
+different build may need more (an OpenSSL-enabled one also wants
+``cygcrypto-*.dll`` and ``cygz.dll``), so add them here if you swap the binary.
 """
 
 import os
@@ -20,6 +25,8 @@ block_cipher = None
 _RUNTIME_FILES = [
     'iperf3.exe',
     'cygwin1.dll',
+    # Only required by OpenSSL-enabled iperf3 builds; harmlessly skipped when
+    # absent, which is the case for the Cygwin build of 3.1.3.
     'cygcrypto-3.dll',
     'cygz.dll',
 ]
@@ -33,7 +40,7 @@ for _name in _RUNTIME_FILES:
     if os.path.exists(_name):
         datas.append((_name, '.'))
     else:
-        print(f'WARNING: {_name} not found; the bundle will be incomplete.')
+        print(f'NOTE: {_name} not found; it will not be bundled.')
 
 
 a = Analysis(

@@ -19,3 +19,10 @@ Thumbs.db
 .pytest_cache/
 .coverage
 htmlcov/
+
+# iperf3 binary and its Cygwin runtime are NOT tracked. They are third-party
+# redistributables with their own licences, and pinning a binary in git history
+# makes it permanent. See the "Getting iperf3" section of README.md.
+iperf3.exe
+iperf3
+cyg*.dll
