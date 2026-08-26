@@ -144,7 +144,7 @@ QTabBar::tab:hover:!selected {
 }
 
 /* Text Console */
-QTextEdit {
+QTextEdit, QPlainTextEdit {
     background-color: #121212;
     color: #cccccc;
     border: 1px solid #333333;
@@ -172,4 +172,117 @@ QCheckBox::indicator:checked {
 
 QCheckBox::indicator:hover {
     border: 1px solid #00d2ff;
+}
+
+/* Disabled controls: features the detected iperf3 build does not support are
+   greyed out rather than hidden, so they need a clearly inert appearance. */
+QCheckBox:disabled,
+QLabel:disabled {
+    color: #6a6a6a;
+}
+
+QCheckBox::indicator:disabled {
+    background-color: #2a2a2a;
+    border: 1px solid #3a3a3a;
+}
+
+QLineEdit:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled, QComboBox:disabled {
+    background-color: #2a2a2a;
+    color: #6a6a6a;
+    border: 1px solid #3a3a3a;
+}
+
+QPushButton:disabled {
+    background-color: #2f2f2f;
+    color: #6a6a6a;
+}
+
+QPushButton#start_btn:disabled,
+QPushButton#stop_btn:disabled {
+    background-color: #2f2f2f;
+    color: #6a6a6a;
+}
+
+/* Sweep results table */
+QTableWidget, QTableView {
+    background-color: #252526;
+    alternate-background-color: #2b2b2c;
+    gridline-color: #3a3a3a;
+    color: #e0e0e0;
+    border: 1px solid #333333;
+    border-radius: 4px;
+    selection-background-color: #00d2ff;
+    selection-color: #1e1e1e;
+}
+
+QTableWidget::item, QTableView::item {
+    padding: 4px 6px;
+}
+
+QHeaderView::section {
+    background-color: #2d2d2e;
+    color: #00d2ff;
+    padding: 5px 6px;
+    border: none;
+    border-right: 1px solid #3a3a3a;
+    border-bottom: 1px solid #3a3a3a;
+    font-weight: bold;
+}
+
+QTableCornerButton::section {
+    background-color: #2d2d2e;
+    border: none;
+}
+
+/* Sweep progress */
+QProgressBar {
+    background-color: #2a2a2a;
+    border: 1px solid #3a3a3a;
+    border-radius: 4px;
+    text-align: center;
+    color: #e0e0e0;
+    height: 18px;
+}
+
+QProgressBar::chunk {
+    background-color: #00d2ff;
+    border-radius: 3px;
+}
+
+/* Splitter handles between the panels */
+QSplitter::handle {
+    background-color: #2a2a2a;
+}
+
+QSplitter::handle:horizontal {
+    width: 4px;
+}
+
+QSplitter::handle:vertical {
+    height: 4px;
+}
+
+QSplitter::handle:hover {
+    background-color: #00d2ff;
+}
+
+/* Horizontal scrollbars, needed by the results table and the no-wrap console */
+QScrollBar:horizontal {
+    background-color: #1e1e1e;
+    height: 10px;
+    margin: 0;
+}
+
+QScrollBar::handle:horizontal {
+    background-color: #3a3a3a;
+    border-radius: 5px;
+    min-width: 24px;
+}
+
+QScrollBar::handle:horizontal:hover {
+    background-color: #00d2ff;
+}
+
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+    width: 0;
 }

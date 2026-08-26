@@ -1,290 +1,373 @@
-import csv
-from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
-                             QGroupBox, QLabel, QLineEdit, QPushButton, 
-                             QTextEdit, QTabWidget, QComboBox, QCheckBox, 
-                             QMessageBox, QFileDialog)
-from PyQt6.QtCore import Qt, QRegularExpression
-from PyQt6.QtGui import QIcon, QRegularExpressionValidator, QIntValidator
-from iperf_gui.core.engine import IPerfWorker
-from iperf_gui.core.fuzzer import FuzzEngine
-from iperf_gui.ui.dashboard import TelemetryDashboard
-from iperf_gui.ui.fuzzer_tab import FuzzerTab
-from iperf_gui.ui.dialogs import ExportDialog
-from iperf_gui.utils.paths import resource_path
-import os
+"""Application shell: assembles the panels and wires them to the core engines.
+
+This class deliberately owns no domain logic. Building the argument vector
+lives in :mod:`iperf_gui.core.config`, writing CSV lives in
+:mod:`iperf_gui.core.export`, and running tests lives in
+:mod:`iperf_gui.core.engine`; what remains here is composition and the
+translation of engine signals into widget state.
+"""
+
+from __future__ import annotations
+
+import logging
+
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QCloseEvent, QIcon
+from PyQt6.QtWidgets import (
+    QFileDialog,
+    QHBoxLayout,
+    QMainWindow,
+    QMessageBox,
+    QPushButton,
+    QSplitter,
+    QTabWidget,
+    QVBoxLayout,
+    QWidget,
+)
+
+from ..core.capabilities import CapabilityProbeError, IperfCapabilities, cached_probe
+from ..core.config import ConfigError, IperfConfig
+from ..core.engine import EXIT_CODE_CANCELLED, IperfWorker
+from ..core.export import ExportError, write_results_csv
+from ..core.metrics import IterationResult, Sample
+from ..core.sweep import SweepEngine, SweepStrategy
+from ..utils.paths import resource_path
+from .dashboard import TelemetryDashboard
+from .dialogs import ExportDialog
+from .fuzzer_tab import FuzzerTab
+from .panels.connection_panel import ConnectionPanel
+from .panels.options_panel import OptionsPanel
+from .widgets.console import LogConsole
+
+logger = logging.getLogger(__name__)
+
+#: Milliseconds to wait for a worker to stop when the window is closing.
+SHUTDOWN_TIMEOUT_MS = 5000
+
 
 class MainWindow(QMainWindow):
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle("iperf3 Advanced GUI & Fuzzer")
-        self.resize(1000, 700)
-        
-        icon_path = resource_path(os.path.join("assets", "app_icon.ico"))
-        if os.path.exists(icon_path):
-            self.setWindowIcon(QIcon(icon_path))
-            
-        self.worker = None
-        self.fuzz_engine = FuzzEngine()
-        self.fuzz_engine.log_message.connect(self.log_message)
-        self.fuzz_engine.telemetry_data.connect(self.update_telemetry)
-        self.fuzz_engine.sweep_finished.connect(self.on_fuzz_finished)
-        
-        self.init_ui()
-        
-    def init_ui(self):
+    """The application's only top-level window."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("iperf3 Advanced GUI & Sweeper")
+        self.resize(1200, 800)
+
+        icon = resource_path("app_icon.ico")
+        if icon.is_file():
+            self.setWindowIcon(QIcon(str(icon)))
+
+        self._capabilities = self._detect_capabilities()
+        self._worker: IperfWorker | None = None
+        self._sweep = SweepEngine(self)
+
+        self._build()
+        self._connect_sweep()
+        self._report_environment()
+
+    # ----------------------------------------------------------- composition
+
+    def _detect_capabilities(self) -> IperfCapabilities | None:
+        """Probe the bundled binary, tolerating a failure to find it."""
+        try:
+            return cached_probe()
+        except CapabilityProbeError as exc:
+            logger.error("iperf3 capability probe failed: %s", exc)
+            return None
+
+    def _build(self) -> None:
         central = QWidget()
         self.setCentralWidget(central)
-        main_layout = QHBoxLayout(central)
-        
-        # Left Panel (Controls)
-        left_panel = QWidget()
-        left_layout = QVBoxLayout(left_panel)
-        left_layout.setContentsMargins(0,0,0,0)
-        
-        # Tabs for Normal / Fuzzer
+        root = QHBoxLayout(central)
+
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.addWidget(self._build_left_panel())
+        splitter.addWidget(self._build_right_panel())
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([420, 780])
+        root.addWidget(splitter)
+
+    def _build_left_panel(self) -> QWidget:
+        panel = QWidget()
+        panel.setMinimumWidth(400)
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(0, 0, 0, 0)
+
         self.tabs = QTabWidget()
-        
-        # Normal Mode Tab
-        normal_tab = QWidget()
-        normal_layout = QVBoxLayout(normal_tab)
-        
-        # Connection Group
-        conn_group = QGroupBox("Connection Parameters")
-        conn_layout = QVBoxLayout(conn_group)
-        
-        # Target IP
-        h_ip = QHBoxLayout()
-        h_ip.addWidget(QLabel("Target IP/Host:"))
-        self.ip_input = QLineEdit("127.0.0.1")
-        h_ip.addWidget(self.ip_input)
-        conn_layout.addLayout(h_ip)
-        
-        # Port
-        h_port = QHBoxLayout()
-        h_port.addWidget(QLabel("Port (-p):"))
-        self.port_input = QLineEdit("5201")
-        self.port_input.setValidator(QIntValidator(1, 65535))
-        h_port.addWidget(self.port_input)
-        conn_layout.addLayout(h_port)
-        
-        # Mode
-        h_mode = QHBoxLayout()
-        h_mode.addWidget(QLabel("Mode:"))
-        self.mode_combo = QComboBox()
-        self.mode_combo.addItems(["Client (-c)", "Server (-s)"])
-        h_mode.addWidget(self.mode_combo)
-        conn_layout.addLayout(h_mode)
-        
-        normal_layout.addWidget(conn_group)
-        
-        # L3/L4 Settings Group
-        settings_group = QGroupBox("L3/L4 Stress & TCP Options")
-        settings_layout = QVBoxLayout(settings_group)
-        
-        # Protocol
-        h_proto = QHBoxLayout()
-        h_proto.addWidget(QLabel("Protocol:"))
-        self.proto_combo = QComboBox()
-        self.proto_combo.addItems(["TCP (Default)", "UDP (-u)", "SCTP (--sctp)"])
-        h_proto.addWidget(self.proto_combo)
-        settings_layout.addLayout(h_proto)
-        
-        # Data Rate
-        h_rate = QHBoxLayout()
-        h_rate.addWidget(QLabel("Target Rate (-b):"))
-        self.rate_input = QLineEdit()
-        self.rate_unit = QComboBox()
-        self.rate_unit.addItems(["M", "K", "G"])
-        h_rate.addWidget(self.rate_input)
-        h_rate.addWidget(self.rate_unit)
-        settings_layout.addLayout(h_rate)
-        
-        # Parallel Streams
-        h_parallel = QHBoxLayout()
-        h_parallel.addWidget(QLabel("Parallel Streams (-P):"))
-        self.parallel_input = QLineEdit("1")
-        self.parallel_input.setValidator(QIntValidator(1, 128))
-        h_parallel.addWidget(self.parallel_input)
-        settings_layout.addLayout(h_parallel)
-        
-        # Extra Args (Workaround for unsupported TCP options)
-        h_extra = QHBoxLayout()
-        h_extra.addWidget(QLabel("Extra Custom Args:"))
-        self.extra_input = QLineEdit()
-        h_extra.addWidget(self.extra_input)
-        settings_layout.addLayout(h_extra)
-        
-        # Checkboxes
-        self.reverse_cb = QCheckBox("Reverse (-R)")
-        self.bidir_cb = QCheckBox("Bidir (--bidir)")
-        self.zerocopy_cb = QCheckBox("Zero-Copy (-Z)")
-        
-        h_checks = QHBoxLayout()
-        h_checks.addWidget(self.reverse_cb)
-        h_checks.addWidget(self.bidir_cb)
-        h_checks.addWidget(self.zerocopy_cb)
-        settings_layout.addLayout(h_checks)
-        
-        normal_layout.addWidget(settings_group)
-        
-        # Execution Controls
-        h_exec = QHBoxLayout()
+
+        standard = QWidget()
+        standard_layout = QVBoxLayout(standard)
+
+        self.connection_panel = ConnectionPanel()
+        self.options_panel = OptionsPanel(self._capabilities)
+        standard_layout.addWidget(self.connection_panel)
+        standard_layout.addWidget(self.options_panel)
+
+        buttons = QHBoxLayout()
         self.start_btn = QPushButton("Start Test")
         self.start_btn.setObjectName("start_btn")
         self.start_btn.clicked.connect(self.start_test)
-        
+
         self.stop_btn = QPushButton("Stop / Kill")
         self.stop_btn.setObjectName("stop_btn")
+        self.stop_btn.setEnabled(False)
         self.stop_btn.clicked.connect(self.stop_test)
-        self.stop_btn.setEnabled(False)
-        
-        h_exec.addWidget(self.start_btn)
-        h_exec.addWidget(self.stop_btn)
-        normal_layout.addLayout(h_exec)
-        normal_layout.addStretch()
-        
-        self.tabs.addTab(normal_tab, "Standard Test")
-        
-        # Fuzzer Tab
+
+        buttons.addWidget(self.start_btn)
+        buttons.addWidget(self.stop_btn)
+        standard_layout.addLayout(buttons)
+        standard_layout.addStretch()
+
+        self.tabs.addTab(standard, "Standard Test")
+
         self.fuzzer_tab = FuzzerTab()
-        self.fuzzer_tab.start_sweep_signal.connect(self.start_fuzz_sweep)
-        self.tabs.addTab(self.fuzzer_tab, "Fuzz / Sweep")
-        
-        left_layout.addWidget(self.tabs)
-        left_panel.setMinimumWidth(380)
-        
-        # Right Panel (Graphs & Console)
-        right_panel = QWidget()
-        right_layout = QVBoxLayout(right_panel)
-        right_layout.setContentsMargins(0,0,0,0)
-        
+        self.fuzzer_tab.start_requested.connect(self.start_sweep)
+        self.fuzzer_tab.stop_requested.connect(self._sweep.stop)
+        self.tabs.addTab(self.fuzzer_tab, "Sweep")
+
+        layout.addWidget(self.tabs)
+        return panel
+
+    def _build_right_panel(self) -> QWidget:
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        splitter = QSplitter(Qt.Orientation.Vertical)
+
         self.dashboard = TelemetryDashboard()
-        right_layout.addWidget(self.dashboard, stretch=2)
-        
-        # Export / Clear Buttons
-        h_graph_ctrl = QHBoxLayout()
-        self.clear_btn = QPushButton("Clear Graphs")
-        self.clear_btn.clicked.connect(self.dashboard.reset_data)
-        
+        splitter.addWidget(self.dashboard)
+
+        console_container = QWidget()
+        console_layout = QVBoxLayout(console_container)
+        console_layout.setContentsMargins(0, 0, 0, 0)
+
+        controls = QHBoxLayout()
+        clear_btn = QPushButton("Clear Graphs")
+        clear_btn.clicked.connect(self._clear_output)
         self.export_btn = QPushButton("Export Sweep Results (CSV)")
+        self.export_btn.setEnabled(False)
         self.export_btn.clicked.connect(self.export_results)
-        self.export_btn.setEnabled(False) # Enabled after fuzzing
-        
-        h_graph_ctrl.addWidget(self.clear_btn)
-        h_graph_ctrl.addWidget(self.export_btn)
-        h_graph_ctrl.addStretch()
-        right_layout.addLayout(h_graph_ctrl)
-        
-        self.console = QTextEdit()
-        self.console.setReadOnly(True)
-        right_layout.addWidget(self.console, stretch=1)
-        
-        main_layout.addWidget(left_panel)
-        main_layout.addWidget(right_panel)
-        
-    def build_base_args(self):
-        args = []
-        if self.mode_combo.currentIndex() == 0:
-            args.extend(["-c", self.ip_input.text()])
+        controls.addWidget(clear_btn)
+        controls.addWidget(self.export_btn)
+        controls.addStretch()
+        console_layout.addLayout(controls)
+
+        self.console = LogConsole()
+        console_layout.addWidget(self.console)
+        splitter.addWidget(console_container)
+
+        splitter.setStretchFactor(0, 3)
+        splitter.setStretchFactor(1, 1)
+        layout.addWidget(splitter)
+        return panel
+
+    def _connect_sweep(self) -> None:
+        self._sweep.line_received.connect(self.console.append_line)
+        self._sweep.sample_ready.connect(self.dashboard.add_sample)
+        self._sweep.sweep_started.connect(self._on_sweep_started)
+        self._sweep.sweep_started.connect(self.fuzzer_tab.on_sweep_started)
+        self._sweep.iteration_started.connect(self.fuzzer_tab.on_iteration_started)
+        self._sweep.iteration_finished.connect(self._on_iteration_finished)
+        self._sweep.sweep_finished.connect(self._on_sweep_finished)
+        self._sweep.sweep_failed.connect(self.fuzzer_tab.on_sweep_failed)
+        self._sweep.sweep_failed.connect(self._on_sweep_failed)
+
+    def _report_environment(self) -> None:
+        """Log what was detected, so the console explains any disabled controls."""
+        if self._capabilities is None:
+            self.console.append_line(
+                "WARNING: iperf3 could not be found or run. Tests will fail until "
+                "it is available."
+            )
+            return
+
+        self.console.append_line(f"Detected {self._capabilities.version_banner}")
+        for note in self.options_panel.unsupported_notes():
+            self.console.append_line(f"NOTE: {note}; the control has been disabled.")
+
+    # -------------------------------------------------------- configuration
+
+    def current_config(self) -> IperfConfig | None:
+        """Assemble a config from the panels, reporting problems to the user.
+
+        Returns:
+            The configuration, or ``None`` if it was rejected (in which case
+            the user has already been shown why).
+        """
+        try:
+            config = self.options_panel.apply_to(
+                IperfConfig(
+                    role=self.connection_panel.role(),
+                    host=self.connection_panel.host(),
+                    port=self.connection_panel.port(),
+                )
+            )
+        except ConfigError as exc:
+            QMessageBox.warning(self, "Invalid Options", str(exc))
+            return None
+
+        problems = config.validate()
+        if problems:
+            QMessageBox.warning(self, "Invalid Configuration", "\n".join(problems))
+            return None
+
+        for flag in config.suppressed_client_flags():
+            self.console.append_line(f"NOTE: {flag} is ignored in server mode.")
+
+        return config
+
+    # ------------------------------------------------------------ single run
+
+    def start_test(self) -> None:
+        """Launch a one-off test using the current panel settings."""
+        if self._worker is not None and self._worker.isRunning():
+            return
+
+        config = self.current_config()
+        if config is None:
+            return
+
+        self._clear_output()
+
+        worker = IperfWorker(config, parent=self)
+        worker.line_received.connect(self.console.append_line)
+        worker.sample_ready.connect(self.dashboard.add_sample)
+        worker.summary_ready.connect(self._on_summary)
+        worker.run_failed.connect(self._on_run_failed)
+        worker.run_finished.connect(self._on_run_finished)
+        # Qt reclaims the worker once its thread has genuinely ended. Relying
+        # on the next assignment to drop the reference risked collecting a
+        # QThread whose OS thread was still alive.
+        worker.finished.connect(worker.deleteLater)
+        self._worker = worker
+
+        self._set_running(True)
+        worker.start()
+
+    def stop_test(self) -> None:
+        """Stop whichever of the two engines is currently running."""
+        if self._sweep.is_running:
+            self._sweep.stop()
+        if self._worker is not None:
+            self._worker.stop()
+
+    def _on_summary(self, sample: Sample) -> None:
+        role = sample.role.value if sample.role else "total"
+        self.console.append_line(
+            f"Summary ({role}): {sample.megabits_per_second:.2f} Mbit/s "
+            f"over {sample.interval_end:.2f}s"
+        )
+
+    def _on_run_failed(self, reason: str) -> None:
+        QMessageBox.critical(self, "Test Failed", reason)
+
+    def _on_run_finished(self, exit_code: int) -> None:
+        self._worker = None
+        self._set_running(False)
+        if exit_code == EXIT_CODE_CANCELLED:
+            self.console.append_line("Test stopped.")
         else:
-            args.append("-s")
-            
-        args.extend(["-p", self.port_input.text()])
-        
-        if self.proto_combo.currentIndex() == 1:
-            args.append("-u")
-        elif self.proto_combo.currentIndex() == 2:
-            args.append("--sctp")
-            
-        if self.rate_input.text():
-            args.extend(["-b", f"{self.rate_input.text()}{self.rate_unit.currentText()}"])
-            
-        if int(self.parallel_input.text()) > 1:
-            args.extend(["-P", self.parallel_input.text()])
-            
-        if self.reverse_cb.isChecked():
-            args.append("-R")
-        if self.bidir_cb.isChecked():
-            args.append("--bidir")
-        if self.zerocopy_cb.isChecked():
-            args.append("-Z")
-            
-        if self.extra_input.text():
-            args.extend(self.extra_input.text().split())
-            
-        return args
+            self.console.append_line(f"Test finished with exit code {exit_code}.")
 
-    def start_test(self):
-        if not self.ip_input.text():
-            QMessageBox.warning(self, "Validation Error", "Target IP is required.")
+    # ----------------------------------------------------------------- sweep
+
+    def start_sweep(
+        self, parameter: str, strategy: SweepStrategy, duration: int, cooldown: int
+    ) -> None:
+        """Begin a parameter sweep from the current panel settings."""
+        config = self.current_config()
+        if config is None:
             return
-            
-        self.dashboard.reset_data()
-        self.console.clear()
-        
-        args = self.build_base_args()
-        
-        self.worker = IPerfWorker(args)
-        self.worker.log_message.connect(self.log_message)
-        self.worker.telemetry_data.connect(self.update_telemetry)
-        self.worker.finished.connect(self.test_finished)
-        
-        self.start_btn.setEnabled(False)
-        self.stop_btn.setEnabled(True)
-        self.worker.start()
-        
-    def stop_test(self):
-        if self.worker:
-            self.worker.stop()
-        if self.fuzz_engine.is_running:
-            self.fuzz_engine.stop()
 
-    def test_finished(self, exit_code):
-        self.start_btn.setEnabled(True)
-        self.stop_btn.setEnabled(False)
-        self.log_message(f"Test finished with exit code {exit_code}")
-        
-    def start_fuzz_sweep(self, param, start, end, step, dur, cd):
-        self.console.clear()
-        self.dashboard.reset_data()
-        base_args = self.build_base_args()
-        self.fuzz_engine.start_sweep(base_args, param, start, end, step, dur, cd)
-        
-        self.stop_btn.setEnabled(True)
-        self.tabs.setTabEnabled(0, False)
-        
-    def on_fuzz_finished(self):
-        self.stop_btn.setEnabled(False)
-        self.tabs.setTabEnabled(0, True)
-        if self.fuzz_engine.results:
+        self._clear_output()
+        # The engine emits sweep_started or sweep_failed, and the UI state is
+        # driven entirely from those signals. The previous implementation
+        # disabled controls optimistically before knowing whether the sweep had
+        # started, which left them stuck when validation rejected it.
+        self._sweep.start(config, parameter, strategy, duration, cooldown)
+
+    def _on_sweep_started(self, total: int) -> None:
+        self._set_running(True)
+
+    def _on_iteration_finished(self, result: IterationResult) -> None:
+        self.fuzzer_tab.on_iteration_finished(result)
+        self.export_btn.setEnabled(True)
+        # Each iteration is an independent test, so restart the time axis
+        # rather than letting successive runs overlap on one plot.
+        self.dashboard.reset()
+
+    def _on_sweep_finished(self) -> None:
+        self._set_running(False)
+        self.fuzzer_tab.on_sweep_finished()
+        if self._sweep.results:
             self.export_btn.setEnabled(True)
-            QMessageBox.information(self, "Fuzzing Complete", "Sweep finished. You can now export the results.")
 
-    def update_telemetry(self, metrics):
-        self.dashboard.add_data(metrics)
+    def _on_sweep_failed(self, reason: str) -> None:
+        self._set_running(False)
+        QMessageBox.warning(self, "Sweep Problem", reason)
 
-    def log_message(self, msg):
-        self.console.append(msg)
-        
-    def export_results(self):
-        if not self.fuzz_engine.results:
+    # ------------------------------------------------------------------ misc
+
+    def _set_running(self, running: bool) -> None:
+        """Single point of truth for which controls are usable."""
+        self.start_btn.setEnabled(not running)
+        self.stop_btn.setEnabled(running)
+        self.connection_panel.setEnabled(not running)
+        self.options_panel.setEnabled(not running)
+        self.fuzzer_tab.set_inputs_enabled(not running)
+        if not self._sweep.is_running:
+            self.fuzzer_tab.start_btn.setEnabled(not running)
+            self.fuzzer_tab.stop_btn.setEnabled(running)
+
+    def _clear_output(self) -> None:
+        self.console.clear_log()
+        self.dashboard.reset()
+
+    def export_results(self) -> None:
+        """Write the accumulated sweep results to a CSV file."""
+        results = self._sweep.results
+        if not results:
+            QMessageBox.information(self, "Nothing to Export", "No sweep results yet.")
             return
-            
+
         dialog = ExportDialog(self)
-        if dialog.exec():
-            cols = dialog.get_selected_columns()
-            if not cols:
-                QMessageBox.warning(self, "Export Error", "No columns selected.")
-                return
-                
-            path, _ = QFileDialog.getSaveFileName(self, "Save CSV", "", "CSV Files (*.csv)")
-            if path:
-                try:
-                    with open(path, 'w', newline='') as f:
-                        writer = csv.DictWriter(f, fieldnames=cols, extrasaction='ignore')
-                        writer.writeheader()
-                        for row in self.fuzz_engine.results:
-                            writer.writerow(row)
-                    QMessageBox.information(self, "Success", f"Results exported to {path}")
-                except Exception as e:
-                    QMessageBox.critical(self, "Error", f"Failed to export: {str(e)}")
+        if not dialog.exec():
+            return
+
+        columns = dialog.selected_columns()
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save CSV", "sweep_results.csv", "CSV Files (*.csv)"
+        )
+        if not path:
+            return
+
+        try:
+            written = write_results_csv(path, results, columns)
+        except ExportError as exc:
+            QMessageBox.critical(self, "Export Failed", str(exc))
+            return
+
+        QMessageBox.information(
+            self, "Export Complete", f"Wrote {written} row(s) to {path}."
+        )
+
+    # ------------------------------------------------------------- shutdown
+
+    def closeEvent(self, event: QCloseEvent) -> None:  # noqa: D102 - Qt override
+        """Stop background work before the window is destroyed.
+
+        Without this, closing the window mid-test destroyed a running QThread,
+        which aborts the process, and left the iperf3 child running.
+        """
+        logger.info("Shutting down; stopping any active run")
+        self._sweep.shutdown()
+
+        worker = self._worker
+        if worker is not None and worker.isRunning():
+            if not worker.stop_and_wait(SHUTDOWN_TIMEOUT_MS):
+                logger.warning("Worker thread did not stop cleanly")
+        self._worker = None
+
+        super().closeEvent(event)
