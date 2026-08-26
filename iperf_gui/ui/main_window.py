@@ -298,6 +298,9 @@ class MainWindow(QMainWindow):
         )
 
     def _on_run_failed(self, reason: str) -> None:
+        for line in reason.splitlines():
+            if line.strip():
+                self.console.append_line(f"FAILED: {line.strip()}")
         QMessageBox.critical(self, "Test Failed", reason)
 
     def _on_run_finished(self, exit_code: int) -> None:
@@ -305,8 +308,11 @@ class MainWindow(QMainWindow):
         self._set_running(False)
         if exit_code == EXIT_CODE_CANCELLED:
             self.console.append_line("Test stopped.")
+        elif exit_code == 0:
+            self.console.append_line("Test completed successfully.")
         else:
-            self.console.append_line(f"Test finished with exit code {exit_code}.")
+            # The reason and any hint were already reported via run_failed.
+            self.console.append_line(f"Test failed (exit code {exit_code}).")
 
     # ----------------------------------------------------------------- sweep
 

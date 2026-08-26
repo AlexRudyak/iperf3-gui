@@ -22,6 +22,62 @@ EXIT_CODE_LAUNCH_FAILED = -1
 #: Exit code reported when the user stopped the run deliberately.
 EXIT_CODE_CANCELLED = -2
 
+#: Prefix iperf3 uses for fatal diagnostics, e.g.
+#: "iperf3: error - unable to connect to server: Connection refused".
+_ERROR_PREFIX = "iperf3: error -"
+
+#: Hints for failures whose iperf3 message does not say what to do about it.
+#: Matched case-insensitively against the reported reason.
+_ERROR_HINTS: tuple[tuple[str, str], ...] = (
+    (
+        "connection refused",
+        "Nothing is listening on that host and port. Start a server there "
+        "first with: iperf3 -s -p {port}",
+    ),
+    (
+        "no route to host",
+        "The target is unreachable from this machine. Check the address and "
+        "that both hosts are on the same network.",
+    ),
+    (
+        "connection timed out",
+        "The target did not answer. A firewall is most likely dropping TCP "
+        "port {port}, which iperf3 needs for its control connection.",
+    ),
+    (
+        "address already in use",
+        "Port {port} is already taken on this machine. Stop the other "
+        "process or choose a different port.",
+    ),
+    (
+        "server is busy",
+        "The server is already running a test. iperf3 handles one client at "
+        "a time unless it was started with -s -D.",
+    ),
+)
+
+
+def extract_error(line: str) -> str | None:
+    """Return the reason from an ``iperf3: error - ...`` line, if it is one."""
+    stripped = line.strip()
+    if not stripped.lower().startswith(_ERROR_PREFIX):
+        return None
+    return stripped[len(_ERROR_PREFIX):].strip() or stripped
+
+
+def hint_for(reason: str, port: int) -> str | None:
+    """Suggest a remedy for a known failure reason.
+
+    ``iperf3`` reports what went wrong but never what to do about it, and
+    "Connection refused" in particular reads as a fault in this application
+    rather than a missing server on the other end.
+    """
+    lowered = reason.lower()
+    for needle, hint in _ERROR_HINTS:
+        if needle in lowered:
+            return hint.format(port=port)
+    return None
+
 
 class IperfWorker(QThread):
     """Runs one ``iperf3`` process and streams its output as Qt signals.
@@ -55,6 +111,12 @@ class IperfWorker(QThread):
         self._parser = IperfParser(config)
         self._process: subprocess.Popen[str] | None = None
         self._cancelled = False
+        self._last_error: str | None = None
+
+    @property
+    def last_error(self) -> str | None:
+        """The most recent ``iperf3: error`` reason seen on this run."""
+        return self._last_error
 
     @property
     def config(self) -> IperfConfig:
@@ -96,8 +158,16 @@ class IperfWorker(QThread):
         if self._cancelled:
             self.line_received.emit("Run stopped by user.")
             self.run_finished.emit(EXIT_CODE_CANCELLED)
-        else:
-            self.run_finished.emit(exit_code)
+            return
+
+        if exit_code != 0:
+            # iperf3 prints the reason and exits; surface it rather than
+            # leaving the user with a bare non-zero status.
+            reason = self._last_error or f"iperf3 exited with status {exit_code}"
+            hint = hint_for(reason, self._config.port)
+            self.run_failed.emit(f"{reason}\n\n{hint}" if hint else reason)
+
+        self.run_finished.emit(exit_code)
 
     def _execute(self, command: list[str]) -> int:
         """Spawn the process, pump its output, and return its exit code."""
@@ -142,6 +212,12 @@ class IperfWorker(QThread):
         Parsing failures are contained here rather than allowed to escape into
         :meth:`_execute`, where a single malformed row would abort the run.
         """
+        error = extract_error(line)
+        if error is not None:
+            # Remembered rather than raised: iperf3 reports the reason on
+            # stdout and then exits, so the exit code alone cannot say why.
+            self._last_error = error
+
         try:
             sample: Sample | None = self._parser.parse_line(line)
         except Exception:  # pragma: no cover - parser is defensive already
