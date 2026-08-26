@@ -35,9 +35,11 @@ class TestArgumentConstruction:
             reverse=True,
             interval=1.0,
         )
+        # The transport flag sits inside the client-only block, because an
+        # iperf3 server rejects -u/--sctp outright.
         assert config.to_args() == [
-            "-c", "10.0.0.5", "-p", "5202", "-u", "-i", "1",
-            "-b", "100M", "-P", "4", "-t", "30", "-R",
+            "-c", "10.0.0.5", "-p", "5202", "-i", "1",
+            "-u", "-b", "100M", "-P", "4", "-t", "30", "-R",
         ]
 
     def test_parallel_of_one_is_not_emitted(self):
@@ -161,3 +163,83 @@ class TestImmutability:
     def test_expects_aggregate_row(self):
         assert not IperfConfig(parallel=1).expects_aggregate_row
         assert IperfConfig(parallel=2).expects_aggregate_row
+
+
+class TestProtocolSelection:
+    """The transport flag must reach the command line -- and only as a client."""
+
+    @pytest.mark.parametrize(
+        "protocol,expected_flag",
+        [(Protocol.TCP, None), (Protocol.UDP, "-u"), (Protocol.SCTP, "--sctp")],
+    )
+    def test_client_emits_the_transport_flag(self, protocol, expected_flag):
+        args = IperfConfig(protocol=protocol).to_args()
+        if expected_flag is None:
+            assert "-u" not in args and "--sctp" not in args
+        else:
+            assert expected_flag in args
+
+    @pytest.mark.parametrize("protocol", [Protocol.UDP, Protocol.SCTP])
+    def test_server_never_emits_the_transport_flag(self, protocol):
+        """iperf3 -s rejects -u/--sctp: 'some option you are trying to set is client only'."""
+        args = IperfConfig(role=Role.SERVER, protocol=protocol).to_args()
+        assert "-u" not in args
+        assert "--sctp" not in args
+
+    def test_server_reports_the_dropped_transport(self):
+        config = IperfConfig(role=Role.SERVER, protocol=Protocol.UDP)
+        assert "-u" in config.suppressed_client_flags()
+
+    def test_udp_flag_survives_alongside_other_options(self):
+        args = IperfConfig(
+            protocol=Protocol.UDP, bitrate="10M", parallel=4, reverse=True
+        ).to_args()
+        assert "-u" in args
+
+
+class TestServerExtraArgumentFiltering:
+    """Client-only extras must not leak into a server command line."""
+
+    def test_flag_value_pairs_are_removed_together(self):
+        """Dropping only the flag left its value as a stray positional argument."""
+        args = IperfConfig(role=Role.SERVER, extra_args=("-M", "1400")).to_args()
+        assert "-M" not in args
+        assert "1400" not in args
+
+    @pytest.mark.parametrize(
+        "extra",
+        [
+            ("--udp",),
+            ("--parallel", "4"),
+            ("--reverse",),
+            ("--set-mss", "1400"),
+            ("--cport", "5000"),
+            ("--no-delay",),
+        ],
+    )
+    def test_long_option_spellings_are_filtered(self, extra):
+        args = IperfConfig(role=Role.SERVER, extra_args=extra).to_args()
+        for token in extra:
+            assert token not in args
+
+    def test_inline_equals_form_is_filtered(self):
+        args = IperfConfig(role=Role.SERVER, extra_args=("--bandwidth=10M",)).to_args()
+        assert "--bandwidth=10M" not in args
+
+    def test_inline_equals_does_not_eat_the_next_argument(self):
+        args = IperfConfig(
+            role=Role.SERVER, extra_args=("--bandwidth=10M", "--logfile", "o.txt")
+        ).to_args()
+        assert args[-2:] == ["--logfile", "o.txt"]
+
+    def test_server_compatible_extras_are_preserved(self):
+        args = IperfConfig(
+            role=Role.SERVER, extra_args=("-N", "--logfile", "o.txt", "-P", "4", "-V")
+        ).to_args()
+        assert "--logfile" in args and "o.txt" in args and "-V" in args
+        assert "-N" not in args and "-P" not in args and "4" not in args
+
+    def test_client_mode_filters_nothing(self):
+        extra = ("-N", "-P", "4", "--cport", "5000")
+        args = IperfConfig(extra_args=extra).to_args()
+        assert args[-len(extra):] == list(extra)

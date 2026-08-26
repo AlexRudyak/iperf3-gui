@@ -218,3 +218,52 @@ def _sample(**overrides) -> Sample:
     )
     defaults.update(overrides)
     return Sample(**defaults)
+
+
+class TestServerModeTransportGating:
+    """A server cannot choose the transport; the control must say so."""
+
+    def test_protocol_disabled_in_server_mode(self, qapp):
+        from iperf_gui.ui.panels.connection_panel import ConnectionPanel
+
+        options = OptionsPanel(CAPS_OLD)
+        connection = ConnectionPanel()
+        connection.role_changed.connect(
+            lambda role: options.set_server_mode(role is Role.SERVER)
+        )
+        connection.role_combo.setCurrentIndex(1)
+        assert connection.role() is Role.SERVER
+        assert not options.protocol_combo.isEnabled()
+        assert "client" in options.protocol_combo.toolTip().lower()
+
+    def test_protocol_reenabled_in_client_mode(self, qapp):
+        options = OptionsPanel(CAPS_OLD)
+        options.set_server_mode(True)
+        options.set_server_mode(False)
+        assert options.protocol_combo.isEnabled()
+        assert options.protocol_combo.toolTip() == ""
+
+
+class TestProtocolReachesTheCommandLine:
+    """Regression: selecting UDP in the combo must produce -u."""
+
+    @pytest.mark.parametrize(
+        "index,protocol,flag",
+        [(0, Protocol.TCP, None), (1, Protocol.UDP, "-u")],
+    )
+    def test_combo_selection_maps_to_the_flag(self, qapp, index, protocol, flag):
+        panel = OptionsPanel(CAPS_OLD)
+        panel.protocol_combo.setCurrentIndex(index)
+        assert panel.protocol() is protocol
+        config = panel.apply_to(_base_config())
+        assert config.protocol is protocol
+        if flag:
+            assert flag in config.to_args()
+
+    def test_combo_carries_protocol_objects_as_item_data(self, qapp):
+        panel = OptionsPanel(CAPS_OLD)
+        data = [
+            panel.protocol_combo.itemData(i)
+            for i in range(panel.protocol_combo.count())
+        ]
+        assert data == [Protocol.TCP, Protocol.UDP, Protocol.SCTP]

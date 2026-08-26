@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import (
     QComboBox,
     QFormLayout,
@@ -24,6 +25,9 @@ class ConnectionPanel(QWidget):
     intermediate state, so reading it back with ``int()`` could raise, whereas
     a spin box always holds a usable integer.
     """
+
+    role_changed = pyqtSignal(object)
+    """Emitted with the new :class:`Role` when the client/server mode changes."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -60,6 +64,7 @@ class ConnectionPanel(QWidget):
         is_client = self.role() is Role.CLIENT
         self.host_input.setEnabled(is_client)
         self.host_label.setEnabled(is_client)
+        self.role_changed.emit(self.role())
 
     # ---------------------------------------------------------------- values
 

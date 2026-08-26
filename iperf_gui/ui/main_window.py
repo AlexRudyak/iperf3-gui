@@ -27,7 +27,7 @@ from PyQt6.QtWidgets import (
 
 from .. import __version__
 from ..core.capabilities import CapabilityProbeError, IperfCapabilities, cached_probe
-from ..core.config import ConfigError, IperfConfig
+from ..core.config import ConfigError, IperfConfig, Protocol, Role
 from ..core.engine import EXIT_CODE_CANCELLED, IperfWorker
 from ..core.export import ExportError, write_results_csv
 from ..core.metrics import IterationResult, Sample
@@ -112,6 +112,8 @@ class MainWindow(QMainWindow):
 
         self.connection_panel = ConnectionPanel()
         self.options_panel = OptionsPanel(self._capabilities)
+        self.connection_panel.role_changed.connect(self._on_role_changed)
+        self._on_role_changed(self.connection_panel.role())
         standard_layout.addWidget(self.connection_panel)
         standard_layout.addWidget(self.options_panel)
 
@@ -185,6 +187,10 @@ class MainWindow(QMainWindow):
         self._sweep.sweep_failed.connect(self.fuzzer_tab.on_sweep_failed)
         self._sweep.sweep_failed.connect(self._on_sweep_failed)
 
+    def _on_role_changed(self, role: Role) -> None:
+        """Disable transport selection in server mode, where it has no effect."""
+        self.options_panel.set_server_mode(role is Role.SERVER)
+
     def _report_environment(self) -> None:
         """Log what was detected, so the console explains any disabled controls."""
         if self._capabilities is None:
@@ -243,6 +249,7 @@ class MainWindow(QMainWindow):
             return
 
         self._clear_output()
+        self._note_control_channel(config)
 
         worker = IperfWorker(config, parent=self)
         worker.line_received.connect(self.console.append_line)
@@ -258,6 +265,23 @@ class MainWindow(QMainWindow):
 
         self._set_running(True)
         worker.start()
+
+    def _note_control_channel(self, config: IperfConfig) -> None:
+        """Warn that a non-TCP test still opens a TCP control connection.
+
+        iperf3 negotiates every test over TCP on the server port and carries
+        only the payload over the selected transport. A packet capture filtered
+        on that port therefore shows TCP even for a UDP run, which reads as the
+        protocol setting having been ignored.
+        """
+        if config.protocol is Protocol.TCP:
+            return
+        self.console.append_line(
+            f"NOTE: iperf3 always opens a TCP control connection on port "
+            f"{config.port}; only the {config.protocol.label.upper()} payload uses "
+            f"the selected transport. In Wireshark, filter on "
+            f"'{config.protocol.label}.port == {config.port}' to see the test data."
+        )
 
     def stop_test(self) -> None:
         """Stop whichever of the two engines is currently running."""

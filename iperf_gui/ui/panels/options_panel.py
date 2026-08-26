@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import (
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
+    QLabel,
     QLineEdit,
     QSpinBox,
     QVBoxLayout,
@@ -66,7 +67,8 @@ class OptionsPanel(QWidget):
         ):
             self.protocol_combo.addItem(label, protocol)
         self.protocol_combo.currentIndexChanged.connect(self._sync_protocol)
-        form.addRow("Protocol:", self.protocol_combo)
+        self.protocol_label = QLabel("Protocol:")
+        form.addRow(self.protocol_label, self.protocol_combo)
 
         rate_row = QHBoxLayout()
         self.rate_input = QLineEdit()
@@ -164,6 +166,21 @@ class OptionsPanel(QWidget):
         if self._capabilities is None:
             return []
         return self._capabilities.describe_missing(OPTIONAL_FEATURES)
+
+    def set_server_mode(self, is_server: bool) -> None:
+        """Reflect that only a client chooses the transport.
+
+        An iperf3 server accepts whichever transport the connecting client
+        selects, and rejects ``-u``/``--sctp`` outright, so the control is
+        disabled rather than silently ignored.
+        """
+        self.protocol_combo.setDisabled(is_server)
+        self.protocol_label.setEnabled(not is_server)
+        self.protocol_combo.setToolTip(
+            "In server mode the transport is chosen by the connecting client."
+            if is_server
+            else ""
+        )
 
     def _sync_protocol(self) -> None:
         """UDP needs an explicit target rate; without -b iperf3 defaults to 1 Mbit/s."""

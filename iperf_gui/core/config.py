@@ -47,11 +47,67 @@ class ConfigError(ValueError):
     """Raised when a configuration cannot be turned into a valid command."""
 
 
-#: Flags that only make sense when running as a client. Emitting these in
-#: server mode makes iperf3 exit with a usage error, so they are suppressed.
-_CLIENT_ONLY_FLAGS = frozenset(
-    {"-b", "-P", "-R", "--bidir", "-Z", "-t", "-M", "-w", "-l", "-n", "-k"}
-)
+#: Options iperf3 accepts only in client mode, mapped to whether they consume a
+#: following value. Passing any of them to ``iperf3 -s`` aborts startup with
+#: "parameter error - some option you are trying to set is client only".
+#:
+#: ``-u`` and ``--sctp`` are in here because the transport is chosen solely by
+#: the client; a server serves whichever transport connects to it.
+#:
+#: Both spellings of every option are listed. Filtering only the short form let
+#: a user's ``--udp`` in the extra-arguments field through untouched.
+_CLIENT_ONLY_OPTIONS: dict[str, bool] = {
+    "-c": True, "--client": True,
+    "-u": False, "--udp": False,
+    "--sctp": False,
+    "--bidir": False,
+    "-b": True, "--bandwidth": True, "--bitrate": True,
+    "-t": True, "--time": True,
+    "-n": True, "--bytes": True,
+    "-k": True, "--blockcount": True,
+    "-l": True, "--len": True,
+    "--cport": True,
+    "-P": True, "--parallel": True,
+    "-R": False, "--reverse": False,
+    "-w": True, "--window": True,
+    "-M": True, "--set-mss": True,
+    "-N": False, "--no-delay": False,
+    "-4": False, "--version4": False,
+    "-6": False, "--version6": False,
+    "-Z": False, "--zerocopy": False,
+    "-T": True, "--title": True,
+    "-C": True, "--congestion": True, "--linux-congestion": True,
+    "--get-server-output": False,
+}
+
+#: Backwards-compatible view used for membership tests.
+_CLIENT_ONLY_FLAGS = frozenset(_CLIENT_ONLY_OPTIONS)
+
+
+def _strip_client_only(args: tuple[str, ...]) -> list[str]:
+    """Remove client-only options, and the values that belong to them.
+
+    Dropping just the flag would leave its value behind as a stray positional
+    argument -- ``("-M", "1400")`` became a bare ``1400`` on the server command
+    line. Both the ``--flag value`` and ``--flag=value`` spellings are handled.
+    """
+    kept: list[str] = []
+    skip_value = False
+
+    for arg in args:
+        if skip_value:
+            skip_value = False
+            continue
+
+        name, sep, _ = arg.partition("=")
+        if name in _CLIENT_ONLY_OPTIONS:
+            # An inline "=value" carries its own value, so nothing to skip.
+            skip_value = _CLIENT_ONLY_OPTIONS[name] and not sep
+            continue
+
+        kept.append(arg)
+
+    return kept
 
 
 @dataclass(frozen=True)
@@ -153,6 +209,8 @@ class IperfConfig:
         if self.role is Role.CLIENT:
             return []
         active: set[str] = set()
+        if self.protocol.flag:
+            active.add(self.protocol.flag)
         if self.bitrate:
             active.add("-b")
         if self.parallel > 1:
@@ -165,7 +223,11 @@ class IperfConfig:
             active.add("-Z")
         if self.duration is not None:
             active.add("-t")
-        active.update(a for a in self.extra_args if a in _CLIENT_ONLY_FLAGS)
+        active.update(
+            a.partition("=")[0]
+            for a in self.extra_args
+            if a.partition("=")[0] in _CLIENT_ONLY_OPTIONS
+        )
         return sorted(active)
 
     def ensure_valid(self) -> None:
@@ -197,9 +259,6 @@ class IperfConfig:
 
         args += ["-p", str(self.port)]
 
-        if self.protocol.flag:
-            args.append(self.protocol.flag)
-
         # The report interval governs how often measurements arrive and is
         # meaningful on both sides of the connection. It is skipped when the
         # user supplies their own so that iperf3 sees only one.
@@ -207,6 +266,10 @@ class IperfConfig:
             args += ["-i", _format_interval(self.interval)]
 
         if self.role is Role.CLIENT:
+            # The transport is chosen by the client only; a server follows
+            # whatever the client connects with.
+            if self.protocol.flag:
+                args.append(self.protocol.flag)
             if self.bitrate:
                 args += ["-b", self.bitrate.strip()]
             if self.parallel > 1:
@@ -221,8 +284,9 @@ class IperfConfig:
                 args.append("-Z")
             args.extend(self.extra_args)
         else:
-            # Preserve genuinely server-compatible extras such as --logfile.
-            args.extend(a for a in self.extra_args if a not in _CLIENT_ONLY_FLAGS)
+            # Preserve genuinely server-compatible extras such as --logfile,
+            # dropping client-only options together with their values.
+            args.extend(_strip_client_only(self.extra_args))
 
         return args
 
