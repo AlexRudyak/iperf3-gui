@@ -1,5 +1,23 @@
 @echo off
-echo Building iperf_gui...
-pyinstaller --noconfirm --onefile --windowed --icon "iperf_gui\assets\app_icon.ico" --add-data "iperf_gui\assets\app_icon.ico;assets" --add-data "iperf_gui\assets\style.qss;assets" --add-data "iperf3.exe;." --add-data "cygwin1.dll;." "main.py"
-echo Build complete!
-pause
+REM Builds the single-file Windows executable into dist\iperf-gui.exe.
+REM All bundle options live in main.spec so there is only one definition.
+
+echo Running tests...
+python -m pytest
+if errorlevel 1 (
+    echo.
+    echo Tests failed; aborting build.
+    exit /b 1
+)
+
+echo.
+echo Building iperf-gui...
+pyinstaller --noconfirm main.spec
+if errorlevel 1 (
+    echo.
+    echo Build failed.
+    exit /b 1
+)
+
+echo.
+echo Build complete: dist\iperf-gui.exe

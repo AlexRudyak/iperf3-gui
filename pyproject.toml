@@ -1,0 +1,59 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "iperf-gui"
+version = "1.0.0"
+description = "Desktop GUI and parameter sweeper for the iperf3 network throughput tester"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "PyQt6==6.7.1",
+    "pyqtgraph==0.13.7",
+    # Required transitively by pyqtgraph, pinned here because the dashboard
+    # uses it directly.
+    "numpy>=1.22",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4",
+    "pytest-cov>=4.1",
+]
+build = [
+    "pyinstaller>=6.0",
+]
+
+[project.scripts]
+iperf-gui = "main:main"
+
+[tool.setuptools]
+packages = [
+    "iperf_gui",
+    "iperf_gui.core",
+    "iperf_gui.core.sweep",
+    "iperf_gui.ui",
+    "iperf_gui.ui.panels",
+    "iperf_gui.ui.widgets",
+    "iperf_gui.utils",
+]
+
+[tool.setuptools.package-data]
+iperf_gui = ["assets/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 95
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "D"]
+ignore = ["D203", "D213"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["D"]
