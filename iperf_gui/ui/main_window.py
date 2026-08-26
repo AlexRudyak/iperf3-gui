@@ -25,6 +25,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from .. import __version__
 from ..core.capabilities import CapabilityProbeError, IperfCapabilities, cached_probe
 from ..core.config import ConfigError, IperfConfig
 from ..core.engine import EXIT_CODE_CANCELLED, IperfWorker
@@ -43,6 +44,16 @@ logger = logging.getLogger(__name__)
 
 #: Milliseconds to wait for a worker to stop when the window is closing.
 SHUTDOWN_TIMEOUT_MS = 5000
+
+#: Shown once at startup. GPL-3.0 section 5(d) expects an interactive work to
+#: carry appropriate legal notices.
+_LICENCE_NOTICE = (
+    f"iperf3 Advanced GUI & Sweeper {__version__} - "
+    "Copyright (C) 2026 Sasha Rudyak. "
+    "This program comes with ABSOLUTELY NO WARRANTY. It is free software, and "
+    "you are welcome to redistribute it under the terms of the GNU GPL v3 or "
+    "later; see the LICENSE file for details."
+)
 
 
 class MainWindow(QMainWindow):
@@ -177,12 +188,14 @@ class MainWindow(QMainWindow):
     def _report_environment(self) -> None:
         """Log what was detected, so the console explains any disabled controls."""
         if self._capabilities is None:
+            self.console.append_line(_LICENCE_NOTICE)
             self.console.append_line(
                 "WARNING: iperf3 could not be found or run. Tests will fail until "
                 "it is available."
             )
             return
 
+        self.console.append_line(_LICENCE_NOTICE)
         self.console.append_line(f"Detected {self._capabilities.version_banner}")
         for note in self.options_panel.unsupported_notes():
             self.console.append_line(f"NOTE: {note}; the control has been disabled.")

@@ -206,11 +206,18 @@ See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## Licence
 
-No licence has been chosen for this project yet, which means default copyright
-applies and others have no granted rights to reuse the code.
+Licensed under the **GNU General Public License v3.0 or later**. See
+[LICENSE](LICENSE) for the full text.
 
-Note that PyQt6 is offered under the GPL v3 or a commercial licence, which
-constrains what this project can be licensed as. If you distribute a built
-executable that bundles `iperf3` and its Cygwin DLLs, review
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) first — the LGPL carries
-relinking obligations that the source repository itself does not.
+GPL-3.0 is the licence this project can actually use: it links against PyQt6,
+which is offered under the GPL v3 or a commercial licence from Riverbank. A
+permissive licence such as MIT would not be compatible with distributing a
+PyQt6-based binary.
+
+You are free to use, study, modify and redistribute this software, provided
+derivative works are released under the same terms and the corresponding source
+is made available.
+
+Third-party components carry their own licences — see
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), which also covers the LGPL
+obligations that attach if you distribute a build bundling the Cygwin runtime.
