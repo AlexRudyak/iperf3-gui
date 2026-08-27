@@ -189,6 +189,7 @@ class MainWindow(QMainWindow):
         self._sweep.sample_ready.connect(self.dashboard.add_sample)
         self._sweep.sweep_started.connect(self._on_sweep_started)
         self._sweep.sweep_started.connect(self.fuzzer_tab.on_sweep_started)
+        self._sweep.iteration_started.connect(self._on_iteration_started)
         self._sweep.iteration_started.connect(self.fuzzer_tab.on_iteration_started)
         self._sweep.iteration_finished.connect(self._on_iteration_finished)
         self._sweep.sweep_finished.connect(self._on_sweep_finished)
@@ -377,12 +378,19 @@ class MainWindow(QMainWindow):
     def _on_sweep_started(self, total: int) -> None:
         self._set_running(True)
 
+    def _on_iteration_started(self, index: int, total: int, description: str) -> None:
+        """Clear the plots for the iteration that is about to run.
+
+        Each iteration is an independent test with its own time axis, so the
+        traces must not accumulate. Clearing here rather than after the run
+        leaves the final iteration's trace on screen once the sweep ends,
+        instead of wiping it the moment there is something to look at.
+        """
+        self.dashboard.reset()
+
     def _on_iteration_finished(self, result: IterationResult) -> None:
         self.fuzzer_tab.on_iteration_finished(result)
         self.export_btn.setEnabled(True)
-        # Each iteration is an independent test, so restart the time axis
-        # rather than letting successive runs overlap on one plot.
-        self.dashboard.reset()
 
     def _on_sweep_finished(self) -> None:
         self._set_running(False)
