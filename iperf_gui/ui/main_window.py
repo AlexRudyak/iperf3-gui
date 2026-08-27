@@ -32,12 +32,14 @@ from ..core.engine import EXIT_CODE_CANCELLED, IperfWorker
 from ..core.export import ExportError, write_results_csv
 from ..core.metrics import IterationResult, Sample
 from ..core.sweep import SweepEngine, SweepStrategy
+from ..core.udp_sender import UdpBlastConfig, UdpBlastWorker
 from ..utils.paths import resource_path
 from .dashboard import TelemetryDashboard
 from .dialogs import ExportDialog
 from .fuzzer_tab import FuzzerTab
 from .panels.connection_panel import ConnectionPanel
 from .panels.options_panel import OptionsPanel
+from .udp_tab import UdpBlastTab
 from .widgets.console import LogConsole
 
 logger = logging.getLogger(__name__)
@@ -70,6 +72,7 @@ class MainWindow(QMainWindow):
 
         self._capabilities = self._detect_capabilities()
         self._worker: IperfWorker | None = None
+        self._udp_worker: UdpBlastWorker | None = None
         self._sweep = SweepEngine(self)
 
         self._build()
@@ -138,6 +141,11 @@ class MainWindow(QMainWindow):
         self.fuzzer_tab.start_requested.connect(self.start_sweep)
         self.fuzzer_tab.stop_requested.connect(self._sweep.stop)
         self.tabs.addTab(self.fuzzer_tab, "Sweep")
+
+        self.udp_tab = UdpBlastTab()
+        self.udp_tab.start_requested.connect(self.start_udp_blast)
+        self.udp_tab.stop_requested.connect(self.stop_test)
+        self.tabs.addTab(self.udp_tab, "UDP Send")
 
         layout.addWidget(self.tabs)
         return panel
@@ -283,12 +291,47 @@ class MainWindow(QMainWindow):
             f"'{config.protocol.label}.port == {config.port}' to see the test data."
         )
 
+    def start_udp_blast(self, config: UdpBlastConfig) -> None:
+        """Send UDP straight through a socket, with no iperf3 involved.
+
+        iperf3 cannot do this: it negotiates over a TCP control connection and
+        reports figures supplied by the receiver, so it refuses to run when
+        nothing is listening. A raw socket has no such requirement.
+        """
+        if self._udp_worker is not None and self._udp_worker.isRunning():
+            return
+
+        self._clear_output()
+
+        worker = UdpBlastWorker(config, parent=self)
+        worker.line_received.connect(self.console.append_line)
+        worker.sample_ready.connect(self.dashboard.add_sample)
+        worker.summary_ready.connect(self._on_summary)
+        worker.run_failed.connect(self._on_run_failed)
+        worker.run_finished.connect(self._on_udp_finished)
+        worker.finished.connect(worker.deleteLater)
+        self._udp_worker = worker
+
+        self.udp_tab.on_started(config)
+        self._set_running(True)
+        worker.start()
+
+    def _on_udp_finished(self, exit_code: int) -> None:
+        self._udp_worker = None
+        self._set_running(False)
+        self.udp_tab.on_finished(exit_code)
+        self.console.append_line(
+            "Sending stopped." if exit_code else "Sending complete."
+        )
+
     def stop_test(self) -> None:
-        """Stop whichever of the two engines is currently running."""
+        """Stop whichever engine is currently running."""
         if self._sweep.is_running:
             self._sweep.stop()
         if self._worker is not None:
             self._worker.stop()
+        if self._udp_worker is not None:
+            self._udp_worker.stop()
 
     def _on_summary(self, sample: Sample) -> None:
         role = sample.role.value if sample.role else "total"
@@ -360,6 +403,10 @@ class MainWindow(QMainWindow):
         self.connection_panel.setEnabled(not running)
         self.options_panel.setEnabled(not running)
         self.fuzzer_tab.set_inputs_enabled(not running)
+        self.udp_tab.set_inputs_enabled(not running)
+        if self._udp_worker is None:
+            self.udp_tab.start_btn.setEnabled(not running)
+            self.udp_tab.stop_btn.setEnabled(running)
         if not self._sweep.is_running:
             self.fuzzer_tab.start_btn.setEnabled(not running)
             self.fuzzer_tab.stop_btn.setEnabled(running)
@@ -407,10 +454,11 @@ class MainWindow(QMainWindow):
         logger.info("Shutting down; stopping any active run")
         self._sweep.shutdown()
 
-        worker = self._worker
-        if worker is not None and worker.isRunning():
-            if not worker.stop_and_wait(SHUTDOWN_TIMEOUT_MS):
-                logger.warning("Worker thread did not stop cleanly")
+        for worker in (self._worker, self._udp_worker):
+            if worker is not None and worker.isRunning():
+                if not worker.stop_and_wait(SHUTDOWN_TIMEOUT_MS):
+                    logger.warning("%s did not stop cleanly", type(worker).__name__)
         self._worker = None
+        self._udp_worker = None
 
         super().closeEvent(event)

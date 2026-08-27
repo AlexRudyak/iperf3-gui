@@ -21,6 +21,8 @@ Built with PyQt6 and pyqtgraph.
   linear, exponential or explicit series of values, running one test per value
   with a configurable duration and cooldown. Results appear in a table as each
   iteration completes.
+- **UDP Send** — a connectionless traffic generator that needs no server at
+  all. See [Sending UDP without a server](#sending-udp-without-a-server).
 - **CSV export** — choose which columns to write.
 - **Capability detection** — the app probes the `iperf3` binary at startup and
   disables any control that binary does not support, instead of offering it and
@@ -72,6 +74,35 @@ This runs the tests, then builds `dist\iperf-gui.exe` from `main.spec`. All
 bundle options live in the spec file — the batch script only invokes it.
 
 ---
+
+## Sending UDP without a server
+
+`iperf3` cannot send traffic to a host that is not running `iperf3`. It
+negotiates every test over a **TCP control connection** and derives its numbers
+from what the *receiver* reports, so with nothing listening it fails before a
+single datagram leaves the machine:
+
+```
+iperf3: error - unable to connect to server: Connection refused
+```
+
+That is a property of iperf3, not of UDP. UDP is connectionless — datagrams can
+be sent to a closed port or to a host that never replies.
+
+The **UDP Send** tab does exactly that, through a plain socket with no iperf3
+involved. Use it to exercise a firewall rule, load a device that is not an
+iperf3 server, or simply confirm packets leave the interface.
+
+| | Standard Test (iperf3) | UDP Send |
+|---|---|---|
+| Needs a server | Yes | **No** |
+| Handshake | TCP control connection | None |
+| Measures throughput | Yes | Offered load only |
+| Measures loss / jitter | Yes | **No — unknowable** |
+
+Loss and jitter are reported as unknown rather than as zero: without a
+cooperating receiver there is no way to learn what arrived. If you need those
+figures, run an iperf3 server and use the Standard Test tab.
 
 ## Getting iperf3
 
@@ -127,6 +158,7 @@ iperf_gui/
 │   ├── engine.py             IperfWorker: runs one test on a QThread
 │   ├── process.py            Cross-platform subprocess helpers
 │   ├── export.py             CSV writing
+│   ├── udp_sender.py         Serverless UDP traffic generator (no iperf3)
 │   └── sweep/
 │       ├── engine.py         SweepEngine: sequences iterations
 │       └── strategies.py     Linear / Exponential / Explicit value series
@@ -135,6 +167,7 @@ iperf_gui/
 │   ├── main_window.py        Composition and signal wiring only
 │   ├── dashboard.py          Throttled pyqtgraph plots
 │   ├── fuzzer_tab.py         Sweep configuration, progress and results
+│   ├── udp_tab.py            UDP Send tab
 │   ├── dialogs.py            CSV column picker
 │   ├── panels/               Connection and options panels
 │   └── widgets/              Bounded log console, results table

@@ -16,8 +16,6 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PyQt6.QtWidgets")
 
-from PyQt6.QtWidgets import QApplication  # noqa: E402
-
 from iperf_gui.core.capabilities import IperfCapabilities  # noqa: E402
 from iperf_gui.core.config import Protocol, Role  # noqa: E402
 from iperf_gui.core.metrics import (  # noqa: E402
@@ -31,12 +29,6 @@ from iperf_gui.ui.dialogs import ExportDialog  # noqa: E402
 from iperf_gui.ui.panels.connection_panel import ConnectionPanel  # noqa: E402
 from iperf_gui.ui.panels.options_panel import OptionsPanel  # noqa: E402
 from iperf_gui.ui.widgets.console import LogConsole  # noqa: E402
-
-
-@pytest.fixture(scope="session")
-def qapp():
-    app = QApplication.instance() or QApplication([])
-    yield app
 
 
 CAPS_OLD = IperfCapabilities(
